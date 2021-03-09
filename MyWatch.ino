@@ -16,15 +16,15 @@
  * 
  */
 
-#define BT_RX    2
+#define BTN1     5 // back/cancel ?
+#define BTN2     A0 // Up?
+#define BTN3     A3 // Down?
+#define BUZZ     2
+#define FLASH_CS A2
+#define TFT_CS   A1
 #define TFT_BL   3
-#define BT_TX    4
- #define TFT_3V   5
-#define FLASH_CS A0
-#define TFT_DC   A1
-#define TFT_RST  A2 
-#define TFT_CS   A3
-#define BT_STATE A4
+#define TFT_DC   4
+#define TFT_RST  -1 
 #define SCR_WD   240
 #define SCR_HT   240
 
@@ -39,22 +39,16 @@ const char *wDaysFull[]={"Sunday","Monday","Tuesday","Wednesday","Thursday","Fri
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Arduino_ST7789_Fast.h>
-#include <SoftwareSerial.h>
-SoftwareSerial BTserial(BT_RX, BT_TX); // RX | TX
 #include<SPIMemory.h>
 uint32_t arrayAddr;
 
 // init flash
 SPIFlash flash(FLASH_CS);
-bool readSerialStr(String &inputStr);
-String outputString = "";
-
-int dx,dy,dp;
-uint16_t lineBuffer[240];
-uint8_t lineBuffer8[240];
 
 long int now;
 int myTime[6]={0,0,0,0,0,0};
+int blTime=5;
+int Brightness = 15;
 
 Arduino_ST7789 lcd = Arduino_ST7789(TFT_DC, TFT_RST, TFT_CS);
 
@@ -78,23 +72,27 @@ SIGNAL(TIMER0_COMPA_vect)
 void setup(void) 
 {
 
-  Serial.begin(9600);
-  BTserial.begin(9600);        // The Bluetooth Mate defaults to 115200bps
-  while(!BTserial){;}
-  Serial.println("BT Connected");
+  Serial.begin(115200); // 115200
+
+  // buttons
+  pinMode(BTN1, INPUT_PULLUP);
+  pinMode(BTN2, INPUT);
+  pinMode(BTN3, INPUT);
+  // buzzer
+  pinMode(BUZZ, OUTPUT);
+  digitalWrite(BUZZ, false);
 
   pinMode(TFT_CS, OUTPUT);
-  pinMode(BT_STATE,INPUT);
 
   // screen
-  digitalWrite(TFT_BL, true);
-  digitalWrite(TFT_3V, true);
+  //digitalWrite(TFT_BL, true);
+  
   lcd.init(SCR_WD, SCR_HT);
   lcd.fillScreen(BLACK);
   lcd.setCursor(0, 0);
   lcd.setTextColor(WHITE,BLACK);
   lcd.setTextSize(4);
-  //lcd.println("HELLO WORLD");
+
   now=millis(); // read RTC initial value  
   
   // set up interrupt request at same speed as millis()
@@ -109,110 +107,102 @@ void setup(void)
 
   arrayAddr = 0;//random(0, flash.getCapacity());
 
+  loadScreenFromFlash();
 
 }
 
-int incomingByte;      // a variable to read incoming serial data into
-char incoming[32];
-
-int getImage=0;
-int tempNumber=0;
-
+bool getImage=0;
+int blTimer;
+int oldSeconds;
+bool inverted = 0;
 void loop()
 {
-
-  int availableBytes = BTserial.available();
-
-  if(availableBytes>1){
-    for(int i=0; i<availableBytes; i++){
-      incoming[i] = BTserial.read();
-      incoming[i+1] = '\0'; // Append a null
-      // 'Header character' = T for Time
-      if(incoming[0]=='T'){
-        Serial.println("Found T");
-        getTime(&incoming[1]);
-      }
-      // 'Header character' = D for Date
-      if(incoming[0]=='D'){
-        Serial.println("Found D");
-        getDate(&incoming[1]);
-      }
-      // 'Header character' = I for Image
-      if(incoming[0]=='I'){
-        Serial.println("Found I");
-        getImage=1;
-      }
-
+  
+  if(oldSeconds != myTime[2]){
+    oldSeconds = myTime[2];
+    if(blTimer){
+      blTimer--;
     }
   }
 
-  while(BTserial.available() > 0 || getImage==1){
-    int currentByte=BTserial.read();
-    int addTo = 0;
-    switch(currentByte){
-      case '0':
-        addTo = 0;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '1':
-        addTo = 1;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '2':
-        addTo = 2;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '3':
-        addTo = 3;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '4':
-        addTo = 4;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '5':
-        addTo = 5;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '6':
-        addTo = 6;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '7':
-        addTo = 7;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '8':
-        addTo = 8;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case '9':
-        addTo = 9;
-        tempNumber *=10;
-        tempNumber +=addTo;
-      break;
-      case ',':
-        lineBuffer[dx] = pgm_read_word(&brain_pal[tempNumber]);
-        lineBuffer8[dx] = tempNumber;
-        //lcd.drawPixel(dx, dy, brain_pal[tempNumber]);
+  if(blTimer==0){
+    analogWrite(TFT_BL, 0);
+  }else{
+    analogWrite(TFT_BL, Brightness);
+  }
+  
+  if(Serial.available()){
+    blTimer = 5;
+    oldSeconds = myTime[2];
+    analogWrite(TFT_BL, Brightness);
+    
+     char task = Serial.read();
+     if(task=='C'){ // connect
+      Serial.println(240);
+      Serial.println(240);
+     }
+
+     // 'Header character' = T for Time
+     if(task=='T'){
+       getDateTime();
+     }
+     // 'Header character' = I for Image
+     if(task=='I'){
+       //downloadImage();
+       getImage = 1;
+       lcd.fillScreen(BLACK);
+       Serial.println("Receiving Image Data");
+
+       Serial.println("Erasing 64k for image data");
+       if(flash.eraseBlock64K(0)){ // erase first 64k, full screen image takes 56.25k
+         Serial.println("Erasing complete");
+       }else{
+         Serial.println("Erasing failed");
+       }
+
+       lcd.setCursor(0,232);
+       lcd.setTextColor(WHITE,BLACK);
+       lcd.setTextSize(1);
+       lcd.print("Downloading Data...");
+
+       // signal to start sending data
+       Serial.println("OK");
+     
+     }
+  }
+
+  int dx=0,dy=0,counter=0;
+  uint16_t lineBuffer[240];
+  uint8_t lineBuffer8[240];
+  
+  while(getImage==1){
+/*
+    lcd.setCursor(0,16);
+    lcd.setTextColor(WHITE,BLACK);
+    lcd.setTextSize(1);
+    char tempText[15];
+    sprintf(tempText,"%03d,%03d",dx,dy);
+    lcd.print(tempText);
+*/
+    if(Serial.available()>0){
+        uint8_t currentByte=Serial.read();
+//        Serial.write(currentByte);
+ //       lcd.drawPixel(dx, dy, pgm_read_word(&brain_pal[currentByte]));
+        
+//        char tempText[15];
+//        sprintf(tempText,"%03d",currentByte);
+//        lcd.setCursor(0,24);
+//        lcd.print(tempText);
+        lineBuffer8[dx] = currentByte;
+        lineBuffer[dx] = pgm_read_word(&brain_pal[currentByte]);
+        if(++counter==64){
+          counter=0;
+           // signal to start sending data
+           Serial.println("OK");
+        }
         if(++dx==240){
           dx=0;
           if(dy==0){
-            Serial.println("Erasing 64k for image data");
-            if(flash.eraseBlock64K(0)){ // erase first 64k, full screen image takes 56.25k
-              Serial.println("Erasing complete");
-            }else{
-              Serial.println("Erasing failed");
-            }
           }
           if (flash.writeByteArray(arrayAddr, lineBuffer8, 240)) {  //240 is the size of the array
             arrayAddr+=240;
@@ -226,30 +216,28 @@ void loop()
             getImage=0;
           }
         }
-        tempNumber =0;
-      break;
-    }
-
-  }
-
+    } // Serial.available
+  } // getImage
 
   updateScreen();
+//  lcd.invertDisplay(inverted=1-inverted);
 }
 
 
-
-
-bool getTime(const char *str){
+bool getDateTime(){
+  char str[32];
+  int s = 0;
+  while(Serial.available() > 0){
+    str[s++]=Serial.read();
+    str[s]='\0';    
+  }
+  Serial.println(str);
   int Hour, Min, Sec;
-  if (sscanf(str, "%d:%d:%d", &Hour, &Min, &Sec) != 3) return false;
+  int Year, Month, Day;
+  if (sscanf(str, "%d:%d:%d:%d:%d:%d", &Year, &Month, &Day, &Hour, &Min, &Sec) != 6) return false;
   myTime[0] = Hour;
   myTime[1] = Min;
   myTime[2] = Sec;
-  return true;
-}
-bool getDate(const char *str){
-  int Year, Month, Day;
-  if (sscanf(str, "%d:%d:%d", &Year, &Month, &Day) != 3) return false;
   myTime[3] = Year;
   myTime[4] = Month;
   myTime[5] = Day;
@@ -272,6 +260,22 @@ int dayOfWeek(uint16_t year, uint8_t month, uint8_t day)
 }
 
 
+void loadScreenFromFlash(){
+  blTime=5;
+  uint16_t lineBuffer[240];
+  uint8_t lineBuffer8[240];
+  int arrayAddr=0;
+  for(int y=0; y<240; y++ ){
+    if (flash.readByteArray(arrayAddr, lineBuffer8, 240,1)) {  //240 is the size of the array
+     for(int x=0; x<240; x++){
+        lineBuffer[x] = pgm_read_word(&brain_pal[lineBuffer8[x]]);
+      }
+      lcd.drawImage(0,y,240,1,lineBuffer);
+    }
+    arrayAddr+=240;
+  }
+}
+
 void updateScreen(){
 
   char tempText[10];
@@ -292,18 +296,32 @@ void updateScreen(){
   sprintf(tempText,"%s   ",wDaysFull[dayOfWeek(myTime[3],myTime[4],myTime[5])]);
   lcd.print(tempText);
 
-  //sprintf(tempText,"Button:%02d  ",butt);
-  lcd.setTextSize(2);
-  lcd.setCursor(0, 240-24);
-  lcd.print(outputString);
-
-  if(digitalRead(BT_STATE)){
-    lcd.setTextSize(2);
-    lcd.setCursor(0, 240-24);
-    lcd.print("BT Connected");
+  if(digitalRead(BTN1) == false){
+    digitalWrite(BUZZ,true);
   }else{
-    lcd.setTextSize(2);
-    lcd.setCursor(0, 240-24);
-    lcd.print("BT NOT Connected");
+    digitalWrite(BUZZ,false);
   }
+
+  if(digitalRead(BTN2) == true){
+    blTimer=5;
+  }
+
+  if(digitalRead(BTN3) == true){
+  }
+
+    lcd.setCursor(0, 0);
+    lcd.setTextColor(GREEN,BLACK);
+    lcd.setTextSize(3);
+    lcd.print(blTimer);
+
+/*
+  uint16_t lineBuffer[241];
+  for(int dy=0; dy<240; dy++){
+    for(int dx=0; dx<240; dx++){
+      lineBuffer[dx] = random(65535);
+    }
+    lcd.drawImage(0,dy,240,1,lineBuffer);
+  }
+*/
+
 }
